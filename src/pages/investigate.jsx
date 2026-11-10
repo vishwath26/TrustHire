@@ -1,5 +1,7 @@
 
 import { useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { createInvestigation } from '../api'
 import {
   ShieldCheck,
   ArrowLeft,
@@ -20,12 +22,14 @@ import { Link as RouterLink } from 'react-router-dom'
 
 export default function Investigate() {
   const fileInput = useRef(null)
+  const navigate = useNavigate()
   const [files, setFiles] = useState([])
   const [jobUrl, setJobUrl] = useState('')
   const [recruiterUrl, setRecruiterUrl] = useState('')
   const [companyUrl, setCompanyUrl] = useState('')
   const [dragging, setDragging] = useState(false)
   const [message, setMessage] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
   const addFiles = (selectedFiles) => {
     const incoming = Array.from(selectedFiles)
@@ -46,15 +50,29 @@ export default function Investigate() {
     setFiles((previous) => previous.filter((_, i) => i !== index))
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!jobUrl && !recruiterUrl && !companyUrl && files.length === 0) {
       setMessage('Please provide a link or upload at least one file.')
       return
     }
 
-    setMessage(
-      'Your submission is ready! The investigation engine will be connected in a later development phase.'
-    )
+    const body = new FormData()
+    if (jobUrl.trim()) body.append('job_url', jobUrl.trim())
+    if (recruiterUrl.trim()) body.append('recruiter_url', recruiterUrl.trim())
+    if (companyUrl.trim()) body.append('company_url', companyUrl.trim())
+    files.forEach((file) => body.append('evidence_files', file))
+
+    setSubmitting(true)
+    setMessage('')
+
+    try {
+      const investigation = await createInvestigation(body)
+      navigate(`/dashboard/${investigation.public_id}`)
+    } catch (error) {
+      setMessage(error.message || 'Could not reach the TrustHire API.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -273,10 +291,11 @@ export default function Investigate() {
             {/* Submit */}
             <button
               onClick={handleSubmit}
-              className="flex w-full items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-500 py-4 font-semibold shadow-lg shadow-violet-900/30 transition hover:-translate-y-1 hover:shadow-violet-700/30"
+              disabled={submitting}
+              className="flex w-full items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-500 py-4 font-semibold shadow-lg shadow-violet-900/30 transition hover:-translate-y-1 hover:shadow-violet-700/30 disabled:cursor-wait disabled:opacity-70"
             >
               <Search size={19} />
-              Prepare Investigation
+              {submitting ? 'Investigating…' : 'Start investigation'}
             </button>
 
             {message && (
@@ -287,8 +306,8 @@ export default function Investigate() {
             )}
 
             <p className="text-center text-xs text-slate-500">
-              This is an evidence-submission interface. No investigation is
-              performed until the backend is connected.
+              Links and documents are checked for known recruitment-fraud patterns.
+              A low score means those patterns were not found. It is not proof the offer is genuine.
             </p>
           </div>
 

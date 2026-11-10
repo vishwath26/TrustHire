@@ -299,9 +299,12 @@ function App() {
   {/* Application pages — shared sidebar */}
   <Route element={<AppLayout />}>
     <Route path="/dashboard" element={<InvestigationDashboard />} />
+    <Route path="/dashboard/:publicId" element={<InvestigationDashboard />} />
     <Route path="/investigate" element={<Investigate />} />
     <Route path="/report" element={<RiskAssessment />} />
+    <Route path="/report/:publicId" element={<RiskAssessment />} />
     <Route path="/trust-graph" element={<TrustGraph />} />
+    <Route path="/trust-graph/:publicId" element={<TrustGraph />} />
     <Route path="/threat-intelligence" element={<ThreatIntelligence />} />
     <Route path="/my-investigations" element={<MyInvestigations />} />
   </Route>
