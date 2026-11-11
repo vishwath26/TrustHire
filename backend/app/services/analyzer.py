@@ -1,99 +1,106 @@
-"""Score a recruitment submission from the evidence the user provided.
 
-The score is a count of warning signs in that evidence. A low score means those
-signs were absent. It is not a guarantee that the opportunity is legitimate.
+"""Analyze recruitment evidence and identify potential warning signs.
+
+A low score means fewer warning signs were detected in the submitted evidence.
+It does NOT prove that a job, recruiter, or company is legitimate.
+
+Scoring is deterministic. OCR text is supplied by app.services.extract.
+No external AI API is called by this module.
 """
 
 import ipaddress
 import json
+import logging
 import re
 import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from urllib.parse import urlparse
-
 from app.services.extract import extract_text
+from app.services.ai_analyzer import analyze_recruitment_text
 
+
+logger = logging.getLogger(__name__)
+
+MAX_TEXT_PER_SOURCE = 80_000
+MAX_TOTAL_TEXT = 250_000
+MAX_PAGE_BYTES = 150_000
+PAGE_TIMEOUT_SECONDS = 5
 
 FREE_EMAIL_DOMAINS = {
-    "gmail.com",
-    "googlemail.com",
-    "yahoo.com",
-    "yahoo.co.in",
-    "hotmail.com",
-    "outlook.com",
-    "live.com",
-    "aol.com",
-    "icloud.com",
-    "proton.me",
-    "protonmail.com",
-    "gmx.com",
-    "mail.com",
-    "rediffmail.com",
+    "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.in",
+    "hotmail.com", "outlook.com", "live.com", "aol.com",
+    "icloud.com", "proton.me", "protonmail.com", "gmx.com",
+    "mail.com", "rediffmail.com",
 }
 
 SUSPICIOUS_TLDS = {
-    "xyz",
-    "top",
-    "click",
-    "gq",
-    "tk",
-    "ml",
-    "cf",
-    "buzz",
-    "work",
-    "rest",
-    "country",
+    "xyz", "top", "click", "gq", "tk", "ml", "cf", "buzz",
+    "work", "rest", "country",
 }
 
 URL_SHORTENERS = {
-    "bit.ly",
-    "tinyurl.com",
-    "t.co",
-    "goo.gl",
-    "is.gd",
-    "cutt.ly",
-    "rb.gy",
-    "shorturl.at",
+    "bit.ly", "tinyurl.com", "t.co", "goo.gl", "is.gd",
+    "cutt.ly", "rb.gy", "shorturl.at",
 }
 
 JOB_BOARDS = {
-    "linkedin.com",
-    "indeed.com",
-    "naukri.com",
-    "internshala.com",
-    "foundit.in",
-    "glassdoor.com",
-    "glassdoor.co.in",
-    "wellfound.com",
-    "instahyre.com",
+    "linkedin.com", "indeed.com", "naukri.com", "internshala.com",
+    "foundit.in", "glassdoor.com", "glassdoor.co.in",
+    "wellfound.com", "instahyre.com",
 }
 
 PAYMENT_PATTERNS = [
-    (r"registration fee", "The evidence mentions a registration fee."),
-    (r"training fee", "The evidence mentions a training fee."),
-    (r"processing fee", "The evidence mentions a processing fee."),
-    (r"security deposit", "The evidence asks for a security deposit."),
-    (r"pay(?:ment)? (?:to|before) (?:join|start|receive)", "The evidence asks for payment before the role begins."),
-    (r"upfront (?:payment|fee)", "The evidence asks for an upfront fee."),
-    (r"gift cards?", "The evidence asks for payment by gift card."),
-    (r"\b(?:bitcoin|crypto(?:currency)?|usdt)\b", "The evidence asks for cryptocurrency."),
-    (r"western union|wire transfer", "The evidence asks for a wire or Western Union payment."),
+    (r"\bregistration fee\b", "The evidence mentions a registration fee."),
+    (r"\btraining fee\b", "The evidence mentions a training fee."),
+    (r"\bprocessing fee\b", "The evidence mentions a processing fee."),
+    (r"\bsecurity deposit\b", "The evidence asks for a security deposit."),
+    (
+        r"\bpay(?:ment)?\s+(?:to|before)\s+(?:join|start|receive)\b",
+        "The evidence asks for payment before the role or benefit begins.",
+    ),
+    (r"\bupfront\s+(?:payment|fee)\b", "The evidence asks for an upfront fee."),
+    (r"\bgift cards?\b", "The evidence mentions gift cards as a payment method."),
+    (
+        r"\b(?:bitcoin|cryptocurrency|crypto|usdt)\b",
+        "The evidence mentions cryptocurrency.",
+    ),
+    (
+        r"\bwestern union\b|\bwire transfer\b",
+        "The evidence mentions a wire or Western Union payment.",
+    ),
 ]
 
 URGENCY_PATTERNS = [
-    (r"whatsapp only|telegram only", "Contact is limited to WhatsApp or Telegram."),
-    (r"no interview", "The message says there is no interview."),
-    (r"immediate joining|join today|limited seats", "The message uses urgency to push a quick decision."),
-    (r"send (?:your )?(?:aadhaar|aadhar|passport|pan card|bank details|otp)", "The message asks for identity documents, bank details, or an OTP."),
+    (
+        r"\bwhatsapp only\b|\btelegram only\b",
+        "Contact appears to be restricted to WhatsApp or Telegram.",
+    ),
+    (r"\bno interview\b", "The message says there is no interview."),
+    (
+        r"\bimmediate joining\b|\bjoin today\b|\blimited seats\b",
+        "The message uses urgency to push a quick decision.",
+    ),
+    (
+        r"\bsend\s+(?:your\s+)?(?:aadhaar|aadhar|passport|pan card|"
+        r"bank details|otp)\b",
+        "The message requests identity documents, bank details, or an OTP.",
+    ),
 ]
 
-EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
+EMAIL_RE = re.compile(
+    r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}",
+    re.IGNORECASE,
+)
+
 PHONE_RE = re.compile(r"(?:\+\d{1,3}[\s\-]?)?(?:\d[\s\-]?){10,13}\d")
+
 ROLE_RE = re.compile(
-    r"(?:role|position|hiring|opening|internship)\s*[:\-]\s*([A-Za-z][A-Za-z0-9 /&\-]{2,60})",
-    re.I,
+    r"(?:role|position|hiring|opening|internship)\s*[:\-]\s*"
+    r"([A-Za-z][A-Za-z0-9 /&\-]{2,60})",
+    re.IGNORECASE,
 )
 
 
@@ -121,176 +128,325 @@ class Analysis:
     extracted: dict = field(default_factory=dict)
 
 
-def analyze(job_url, recruiter_url, company_url, files: list[tuple[str, bytes]]) -> Analysis:
-    texts = []
-    readable_files = []
-    image_files = []
+class _TextExtractor(HTMLParser):
+    """Extract visible text from HTML without retaining markup."""
 
-    for filename, content in files:
-        text = extract_text(filename, content).strip()
-        suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self.skip_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() in {"script", "style", "noscript", "svg"}:
+            self.skip_depth += 1
+
+    def handle_endtag(self, tag):
+        if tag.lower() in {"script", "style", "noscript", "svg"}:
+            self.skip_depth = max(0, self.skip_depth - 1)
+
+    def handle_data(self, data):
+        if not self.skip_depth and data.strip():
+            self.parts.append(data.strip())
+
+    def get_text(self):
+        return re.sub(r"\s+", " ", " ".join(self.parts)).strip()
+
+
+def analyze(
+    job_url: str | None,
+    recruiter_url: str | None,
+    company_url: str | None,
+    files: list[tuple[str, bytes]],
+) -> Analysis:
+    """Analyze supplied documents and URLs, returning a structured result."""
+
+    findings: list[Signal] = []
+    flags: set[str] = set()
+    texts: list[str] = []
+    readable_files: list[str] = []
+    image_files: list[str] = []
+    failed_files: list[str] = []
+    page_notes: list[str] = []
+
+    # Extract uploaded evidence. One unreadable file must not stop the analysis.
+    for filename, content in files or []:
+        safe_name = str(filename or "unnamed file")
+        suffix = safe_name.lower().rsplit(".", 1)[-1] if "." in safe_name else ""
 
         if suffix in {"png", "jpg", "jpeg"}:
-            image_files.append(filename)
+            image_files.append(safe_name)
 
-        if text:
-            readable_files.append(filename)
-            texts.append(text[:80_000])
+        if not isinstance(content, bytes):
+            failed_files.append(safe_name)
+            logger.warning("Skipping non-bytes upload: %s", safe_name)
+            continue
 
-    page_notes = []
+        try:
+            extracted_text = extract_text(safe_name, content)
+            extracted_text = (extracted_text or "").strip()
+        except Exception:
+            logger.exception("Text extraction failed for %s", safe_name)
+            extracted_text = ""
 
-    for label, url in (
-        ("job", job_url),
-        ("recruiter", recruiter_url),
-        ("company", company_url),
-    ):
+        if extracted_text:
+            readable_files.append(safe_name)
+            texts.append(extracted_text[:MAX_TEXT_PER_SOURCE])
+        else:
+            failed_files.append(safe_name)
+
+    # Retrieve only public HTTP(S) pages.
+    supplied_urls = {
+        "job": job_url,
+        "recruiter": recruiter_url,
+        "company": company_url,
+    }
+
+    hosts = {
+        label: _host(url)
+        for label, url in supplied_urls.items()
+    }
+
+    for label, url in supplied_urls.items():
         if not url:
             continue
 
         page = _fetch_public_page(url)
 
         if page["text"]:
-            texts.append(page["text"][:80_000])
-            page_notes.append(f"Retrieved the {label} page ({page['host']}).")
+            texts.append(page["text"][:MAX_TEXT_PER_SOURCE])
+            page_notes.append(
+                f"Retrieved the {label} page from {page['host']}."
+            )
         elif page["error"]:
             page_notes.append(page["error"])
 
-    corpus = "\n".join(texts)
-    emails = _unique(EMAIL_RE.findall(corpus))
-    phones = _unique(_normalize_phone(match) for match in PHONE_RE.findall(corpus))
-    phones = [phone for phone in phones if phone]
+    # Keep the total analysis input bounded.
+    corpus = "\n".join(texts)[:MAX_TOTAL_TEXT]
+        # Supplementary AI analysis.
+    # AI findings never affect the deterministic risk score.
+    ai_result = {"success": False, "findings": []}
 
-    hosts = {
-        "job": _host(job_url),
-        "recruiter": _host(recruiter_url),
-        "company": _host(company_url),
-    }
+    if corpus.strip():
+        try:
+            ai_result = analyze_recruitment_text(corpus)
+
+            if ai_result.get("success"):
+                for item in ai_result.get("findings", []):
+                    findings.append(Signal(
+                        category="ai",
+                        title=f"AI Review: {item['category'].title()}",
+                        detail=(
+                            f"Evidence: \"{item['evidence']}\" "
+                            f"Reason: {item['reason']}"
+                        ),
+                        points=0,
+                        status=item["severity"],
+                    ))
+
+                if ai_result.get("summary"):
+                    findings.append(Signal(
+                        category="ai",
+                        title="AI Analysis Summary",
+                        detail=ai_result["summary"],
+                        points=0,
+                        status="Info",
+                    ))
+
+            else:
+                logger.info(
+                    "Supplementary AI analysis unavailable: %s",
+                    ai_result.get("error", "Unknown error"),
+                )
+
+        except Exception:
+            logger.exception("Supplementary AI analysis failed.")
+
+    emails = _unique(EMAIL_RE.findall(corpus))
+    phones = _unique(
+        phone for phone in (_normalize_phone(x) for x in PHONE_RE.findall(corpus))
+        if phone
+    )
 
     email_domains = _unique(_domain_of(email) for email in emails)
-    domains = _unique([host for host in hosts.values() if host] + email_domains)
+    domains = _unique(
+        [host for host in hosts.values() if host] + email_domains
+    )
 
-    company_name = _company_name(hosts.get("company") or hosts.get("job"), corpus)
+    company_name = _company_name(
+        hosts.get("company") or hosts.get("job"),
+        corpus,
+    )
     job_role = _job_role(corpus)
 
-    findings: list[Signal] = []
-    flags: list[str] = []
-
-    free_domains = [domain for domain in email_domains if domain in FREE_EMAIL_DOMAINS]
+    # Warning: a free email address is a signal to verify, not proof of fraud.
+    free_domains = [
+        domain for domain in email_domains
+        if domain in FREE_EMAIL_DOMAINS
+    ]
     company_host = hosts.get("company")
 
-    if free_domains and company_host and _registrable(company_host) not in free_domains:
-        findings.append(Signal(
-            "domain",
-            "Email domain",
-            "A recruiter address uses "
-            + ", ".join(free_domains)
-            + " rather than the claimed company domain.",
-            20,
-            "High risk",
-        ))
-        flags.append("free_email")
+    if free_domains and company_host:
+        company_root = _registrable(company_host)
+        if company_root not in free_domains:
+            _add_signal(
+                findings,
+                flags,
+                "free_email_mismatch",
+                "domain",
+                "Recruiter email domain",
+                "A recruiter email uses "
+                + ", ".join(free_domains)
+                + " instead of an address matching the submitted company domain.",
+                15,
+                "Review",
+            )
     elif free_domains and not company_host:
-        findings.append(Signal(
+        _add_signal(
+            findings,
+            flags,
+            "free_email",
             "domain",
-            "Email domain",
-            "The only email domains found are free providers: " + ", ".join(free_domains) + ".",
-            12,
+            "Free email provider",
+            "The submitted evidence contains only free email domains: "
+            + ", ".join(free_domains) + ". Verify the recruiter's identity independently.",
+            8,
             "Review",
-        ))
-        flags.append("free_email")
+        )
 
+    # Domain ending and shortened-link checks.
     for host in domains:
         labels = host.split(".")
         tld = labels[-1] if labels else ""
 
         if tld in SUSPICIOUS_TLDS:
-            findings.append(Signal(
+            _add_signal(
+                findings,
+                flags,
+                f"suspicious_tld:{host}",
                 "domain",
-                "Domain reputation",
-                f"{host} uses .{tld}, a domain ending often seen in short-lived recruitment sites.",
-                12,
+                "Domain ending",
+                f"{host} uses the .{tld} domain ending. This is not proof of fraud, "
+                "but the domain should be independently checked.",
+                8,
                 "Review",
-            ))
-            flags.append("suspicious_tld")
+            )
 
         if host in URL_SHORTENERS:
-            findings.append(Signal(
+            _add_signal(
+                findings,
+                flags,
+                f"shortener:{host}",
                 "domain",
                 "Shortened link",
-                f"{host} hides the real destination. Open it only after checking where it leads.",
-                10,
+                f"{host} hides the final destination. Verify the destination "
+                "through an independently obtained company link.",
+                8,
                 "Review",
-            ))
-            flags.append("shortener")
+            )
 
+    # DNS checks for supplied hosts. Job boards are not treated as company domains.
     for label, host in hosts.items():
-        if not host or host in URL_SHORTENERS or _is_job_board(host):
+        if not host or _is_job_board(host):
             continue
 
         if not _domain_resolves(host):
-            findings.append(Signal(
+            _add_signal(
+                findings,
+                flags,
+                f"unresolved:{label}:{host}",
                 "domain",
-                "Domain does not resolve",
-                f"The {label} host {host} did not resolve in DNS.",
-                30,
+                "Domain did not resolve",
+                f"The {label} host {host} did not resolve during this check. "
+                "Temporary DNS problems are possible.",
+                20,
                 "Review",
-            ))
-            flags.append("unresolved")
+            )
 
-    payment_hit = False
-
+    # Payment patterns: count at most one payment warning.
     for pattern, detail in PAYMENT_PATTERNS:
-        if re.search(pattern, corpus, re.I):
-            payment_hit = True
-            findings.append(Signal(
+        if re.search(pattern, corpus, re.IGNORECASE):
+            _add_signal(
+                findings,
+                flags,
+                "payment_request",
                 "payment",
                 "Payment request",
-                detail,
+                detail + " Legitimate employers generally do not require applicants "
+                "to pay to secure a job.",
                 25,
                 "High risk",
-            ))
-            flags.append("payment")
+            )
             break
 
+    # Urgency and sensitive-data patterns: count at most one warning in this group.
     for pattern, detail in URGENCY_PATTERNS:
-        if re.search(pattern, corpus, re.I):
-            findings.append(Signal(
+        if re.search(pattern, corpus, re.IGNORECASE):
+            _add_signal(
+                findings,
+                flags,
+                "pressure_or_sensitive_data",
                 "fraud",
                 "Pressure or sensitive-data request",
-                detail,
+                detail + " Verify the request directly with the organization.",
                 15,
                 "High risk",
-            ))
-            flags.append("urgency")
+            )
             break
 
-    if hosts.get("recruiter") and company_host:
-        recruiter_root = _registrable(hosts["recruiter"])
+    # Compare recruiter and company domains only when both were supplied.
+    recruiter_host = hosts.get("recruiter")
+
+    if recruiter_host and company_host and not _is_job_board(recruiter_host):
+        recruiter_root = _registrable(recruiter_host)
         company_root = _registrable(company_host)
 
-        if recruiter_root and company_root and recruiter_root != company_root and not _is_job_board(hosts["recruiter"]):
-            findings.append(Signal(
+        if recruiter_root and company_root and recruiter_root != company_root:
+            _add_signal(
+                findings,
+                flags,
+                "recruiter_company_domain_mismatch",
                 "recruiter",
-                "Recruiter identity",
-                f"The recruiter link is on {hosts['recruiter']}, which does not match {company_host}.",
+                "Recruiter and company domains differ",
+                f"The recruiter link uses {recruiter_host}, while the company link "
+                f"uses {company_host}. A third-party recruiter may be legitimate, "
+                "so confirm the relationship independently.",
                 8,
                 "Review",
+            )
+
+    # Image-specific extraction status.
+    if image_files:
+        readable_images = [name for name in image_files if name in readable_files]
+        unreadable_images = [name for name in image_files if name not in readable_files]
+
+        if readable_images:
+            findings.append(Signal(
+                "document",
+                "Image text extraction",
+                "OCR extracted readable text from: "
+                + ", ".join(readable_images[:5]) + ".",
+                0,
+                "Info",
             ))
 
-    if company_host and not _domain_resolves(company_host) and "unresolved" not in flags:
-        findings.append(Signal(
-            "company",
-            "Company verification",
-            f"The company host {company_host} could not be resolved.",
-            10,
-            "Review",
-        ))
+        if unreadable_images:
+            findings.append(Signal(
+                "document",
+                "Image text extraction",
+                "No readable text was extracted from: "
+                + ", ".join(unreadable_images[:5])
+                + ". Try a clearer image or provide the original message text.",
+                0,
+                "Info",
+            ))
 
-    if image_files and not readable_files and not corpus.strip():
+    if failed_files:
         findings.append(Signal(
             "document",
-            "Document analysis",
-            "Screenshots were stored, but this service does not read text inside images. Add a PDF or the message text for a fuller check.",
+            "Some files could not be read",
+            "No readable text was extracted from: "
+            + ", ".join(failed_files[:5])
+            + ". The analysis may be incomplete.",
             0,
             "Info",
         ))
@@ -307,61 +463,73 @@ def analyze(job_url, recruiter_url, company_url, files: list[tuple[str, bytes]])
             "Info",
         ))
 
-    has_substance = bool(corpus.strip() or company_host or hosts.get("job") or hosts.get("recruiter"))
-    scored = [item for item in findings if item.points > 0]
-    score = min(100, sum(item.points for item in scored))
+    has_substance = bool(
+        corpus.strip()
+        or any(hosts.values())
+    )
+
+    scored_findings = [item for item in findings if item.points > 0]
+    score = min(100, sum(item.points for item in scored_findings))
 
     if not has_substance:
         risk_score = None
         risk_level = "Insufficient Evidence"
         status = "Incomplete"
         summary = (
-            "There was not enough readable evidence to assess this opportunity. "
-            "Submit a job link, a company site, or a document with text."
+            "There was not enough usable evidence to assess this opportunity. "
+            "Submit a job link, company website, recruiter details, or a readable document."
         )
     else:
         risk_score = float(score)
+        status = "Completed"
 
         if score >= 55:
             risk_level = "High Risk"
             summary = (
-                "Several warning signs showed up in the submitted evidence. "
-                "Treat the opportunity as unsafe until you confirm it through the company itself."
+                "Multiple warning signs were detected in the submitted evidence. "
+                "Do not proceed until the opportunity is independently verified."
             )
         elif score >= 25:
             risk_level = "Needs Review"
             summary = (
-                "Some details need a second look. Nothing here proves fraud, "
-                "and nothing here clears the opportunity either."
+                "Some warning signs were detected. They do not prove fraud, "
+                "but the opportunity needs independent verification."
             )
         else:
-            risk_level = "Verified"
+            risk_level = "Low Risk"
             summary = (
-                "No strong fraud indicators were found in the evidence you submitted. "
-                "That is not proof the offer is genuine. Confirm the role on the company's own site."
+                "Few or no warning signs were detected in the submitted evidence. "
+                "This is not proof that the opportunity is genuine."
             )
 
-        status = "Completed"
-
-        if not scored:
+        if not scored_findings:
             findings.insert(0, Signal(
                 "fraud",
-                "Fraud pattern analysis",
-                "No payment demand, free-email mismatch, or urgency pattern was found in the submitted text.",
+                "Warning-sign review",
+                "No configured payment, pressure, or domain warning pattern "
+                "was detected in the available evidence.",
                 0,
                 "Info",
             ))
 
-    recommendations = _recommendations(risk_level, flags, image_files)
+    recommendations = _recommendations(
+        risk_level,
+        flags,
+        image_files,
+        failed_files,
+    )
+
     modules = _modules(
         readable_files=readable_files,
         image_files=image_files,
+        failed_files=failed_files,
         emails=emails,
         hosts=hosts,
         findings=findings,
         page_notes=page_notes,
         company_name=company_name,
         risk_level=risk_level,
+        has_text=bool(corpus.strip()),
     )
 
     return Analysis(
@@ -380,170 +548,376 @@ def analyze(job_url, recruiter_url, company_url, files: list[tuple[str, bytes]])
             "phones": phones[:20],
             "domains": domains[:20],
             "hosts": hosts,
-            "flags": sorted(set(flags)),
+            "flags": sorted(flags),
             "company_name": company_name,
             "job_role": job_role,
-            "payment_requested": payment_hit,
+            "payment_requested": "payment_request" in flags,
+            "readable_files": readable_files,
+            "unreadable_files": failed_files,
         },
     )
 
 
+def _add_signal(
+    findings: list[Signal],
+    flags: set[str],
+    flag: str,
+    category: str,
+    title: str,
+    detail: str,
+    points: int,
+    status: str,
+) -> None:
+    """Add a finding once, preventing duplicate scoring for the same rule."""
+
+    if flag in flags:
+        return
+
+    flags.add(flag)
+    findings.append(Signal(
+        category=category,
+        title=title,
+        detail=detail,
+        points=points,
+        status=status,
+    ))
+
+
 def dumps(value) -> str:
-    return json.dumps(value)
+    """Serialize values for JSON database fields."""
+
+    return json.dumps(value, ensure_ascii=False)
 
 
-def _modules(*, readable_files, image_files, emails, hosts, findings, page_notes, company_name, risk_level):
+def _modules(
+    *,
+    readable_files,
+    image_files,
+    failed_files,
+    emails,
+    hosts,
+    findings,
+    page_notes,
+    company_name,
+    risk_level,
+    has_text,
+):
+    """Build honest module summaries and statuses."""
+
     by_category: dict[str, list[Signal]] = {}
 
-    for item in findings:
-        by_category.setdefault(item.category, []).append(item)
+    for finding in findings:
+        by_category.setdefault(finding.category, []).append(finding)
 
-    def module_summary(key, fallback):
-        related = by_category.get(key, [])
-        pointed = [item.detail for item in related if item.points > 0]
-
-        if pointed:
-            return " ".join(pointed[:2])
-
-        return fallback
+    def category_summary(category, fallback):
+        related = by_category.get(category, [])
+        meaningful = [
+            item.detail for item in related
+            if item.points > 0
+        ]
+        return " ".join(meaningful[:2]) if meaningful else fallback
 
     document_bits = []
 
     if readable_files:
-        document_bits.append("Read text from " + ", ".join(readable_files[:4]) + ".")
+        document_bits.append(
+            "Successfully extracted readable text from "
+            + ", ".join(readable_files[:4]) + "."
+        )
 
     if image_files:
-        document_bits.append("Stored screenshots: " + ", ".join(image_files[:4]) + ".")
+        readable_images = [
+            name for name in image_files if name in readable_files
+        ]
+        unreadable_images = [
+            name for name in image_files if name not in readable_files
+        ]
+
+        if readable_images:
+            document_bits.append(
+                "OCR processed: " + ", ".join(readable_images[:4]) + "."
+            )
+
+        if unreadable_images:
+            document_bits.append(
+                "OCR could not extract readable text from: "
+                + ", ".join(unreadable_images[:4]) + "."
+            )
+
+    if failed_files and not image_files:
+        document_bits.append(
+            "Unreadable or unsupported files: "
+            + ", ".join(failed_files[:4]) + "."
+        )
 
     if not document_bits:
-        document_bits.append("No document was uploaded. Analysis used the links only.")
+        document_bits.append(
+            "No readable document text was available. Analysis used the supplied links."
+        )
 
     recruiter_fallback = (
-        "Found " + ", ".join(emails[:3]) + "."
+        "Found email addresses: " + ", ".join(emails[:3]) + "."
         if emails
-        else "No recruiter email was found in the submitted evidence."
+        else "No recruiter email address was found in the submitted evidence."
     )
 
     if hosts.get("recruiter"):
-        recruiter_fallback = f"Recruiter link host is {hosts['recruiter']}. " + recruiter_fallback
+        recruiter_fallback = (
+            f"Recruiter link host: {hosts['recruiter']}. " + recruiter_fallback
+        )
 
     company_fallback = (
-        f"Claimed organization: {company_name}."
+        f"Possible organization name: {company_name}."
         if company_name
-        else "No company name could be taken from the links or documents."
+        else "No company name could be identified from the submitted evidence."
     )
 
-    retrieved = [note for note in page_notes if note.startswith("Retrieved")]
-    domain_fallback = " ".join(retrieved) if retrieved else "Checked the hosts named in the submission."
+    retrieved = [
+        note for note in page_notes if note.startswith("Retrieved")
+    ]
+    domain_fallback = (
+        " ".join(retrieved)
+        if retrieved
+        else "No company or recruiter webpage was successfully retrieved."
+    )
 
     fraud_fallback = (
-        "No payment, urgency, or sensitive-data pattern was found."
-        if risk_level != "Insufficient Evidence"
-        else "Fraud patterns were not scored because the evidence had no readable text."
+        "No configured warning pattern was detected."
+        if has_text
+        else "Fraud-pattern analysis was limited because no readable text was available."
     )
 
     specs = [
         ("document", "Document Extraction", " ".join(document_bits)),
-        ("recruiter", "Recruiter Verification", module_summary("recruiter", recruiter_fallback)),
-        ("company", "Company Verification", module_summary("company", company_fallback)),
-        ("domain", "Domain Intelligence", module_summary("domain", domain_fallback)),
-        ("fraud", "Fraud Pattern Analysis", module_summary("fraud", module_summary("payment", fraud_fallback))),
+        (
+            "recruiter",
+            "Recruiter Verification",
+            category_summary("recruiter", recruiter_fallback),
+        ),
+        (
+            "company",
+            "Company Verification",
+            category_summary("company", company_fallback),
+        ),
+        (
+            "domain",
+            "Domain Intelligence",
+            category_summary("domain", domain_fallback),
+        ),
+        (
+            "fraud",
+            "Fraud Pattern Analysis",
+            category_summary(
+                "fraud",
+                category_summary("payment", fraud_fallback),
+            ),
+        ),
     ]
 
     modules = []
 
     for index, (key, title, summary) in enumerate(specs, start=1):
+        # Do not claim that an empty evidence category was fully verified.
+        if key == "document":
+            module_status = "Completed" if readable_files or not failed_files else "Review"
+        elif key == "recruiter":
+            module_status = "Completed" if hosts.get("recruiter") or emails else "Limited"
+        elif key == "company":
+            module_status = "Completed" if hosts.get("company") or company_name else "Limited"
+        elif key == "domain":
+            module_status = "Completed" if any(hosts.values()) else "Limited"
+        else:
+            module_status = "Completed" if has_text else "Limited"
+
         modules.append({
             "module_key": key,
             "title": title,
             "summary": summary,
-            "status": "Completed",
-            "progress": 100,
+            "status": module_status,
+            "progress": 100 if module_status == "Completed" else 40,
             "sort_order": index,
         })
 
     return modules
 
 
-def _recommendations(risk_level, flags, image_files):
+def _recommendations(risk_level, flags, image_files, failed_files):
     items = [
-        "Confirm the opening on the company's own careers page, not only in the message you received.",
-        "Contact the company through a phone number or address you looked up yourself.",
+        "Confirm the vacancy on the company's official careers page.",
+        "Contact the company using contact details obtained independently.",
+        "Never share an OTP, password, or banking credentials with a recruiter.",
     ]
 
-    if "payment" in flags or risk_level == "High Risk":
-        items.insert(0, "Do not pay a registration, training, equipment, or deposit fee.")
-        items.append("Do not send identity documents, bank details, or one-time passwords.")
+    if "payment_request" in flags:
+        items.insert(
+            0,
+            "Do not pay a registration, training, processing, equipment, or deposit fee.",
+        )
 
-    if "free_email" in flags:
-        items.append("Ask the recruiter to reply from the company's own email domain.")
+    if "free_email" in flags or "free_email_mismatch" in flags:
+        items.append(
+            "Ask the recruiter to confirm their identity through an official company channel."
+        )
 
-    if image_files:
-        items.append("If you only uploaded screenshots, also paste the message or upload a PDF so the text can be checked.")
+    if "recruiter_company_domain_mismatch" in flags:
+        items.append(
+            "Confirm directly with the company that the third-party recruiter is authorized."
+        )
+
+    if image_files or failed_files:
+        items.append(
+            "Provide a clearer image, original PDF, or copied message text for a more complete check."
+        )
 
     if risk_level == "Insufficient Evidence":
-        items.append("Add the job link, the company website, and the offer or chat export, then run the check again.")
+        items.append(
+            "Add the job link, company website, recruiter details, and offer or chat evidence."
+        )
 
     if risk_level in {"High Risk", "Needs Review"}:
-        items.append("Tell your placement cell or a trusted person before you continue with this recruiter.")
+        items.append(
+            "Pause the application process until the warning signs have been independently checked."
+        )
 
-    return items
+    return _unique(items)
 
 
 def _fetch_public_page(url: str) -> dict:
-    host = _host(url)
+    """Fetch a small public text page. Redirects are deliberately not followed."""
 
-    if not host:
-        return {"host": "", "text": "", "error": f"Could not read a host from {url}."}
+    parsed = _parse_http_url(url)
+
+    if not parsed:
+        return {
+            "host": "",
+            "text": "",
+            "error": "A supplied link was invalid or did not use HTTP or HTTPS.",
+        }
+
+    host = parsed.hostname.lower()
 
     if not _is_public_host(host):
         return {
             "host": host,
             "text": "",
-            "error": f"{host} is a private or local address, so the page was not retrieved.",
+            "error": f"{host} is private, local, or otherwise not a public host.",
         }
-
-    if not _domain_resolves(host):
-        return {"host": host, "text": "", "error": f"{host} did not resolve, so the page was not retrieved."}
 
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "TrustHire/1.0 (recruitment evidence check)"},
+        headers={
+            "User-Agent": "TrustHire/1.0 (recruitment evidence review)",
+            "Accept": "text/html,text/plain,application/json",
+        },
         method="GET",
     )
 
+    opener = urllib.request.build_opener(_NoRedirectHandler())
+
     try:
-        with urllib.request.urlopen(request, timeout=5) as response:
-            content_type = response.headers.get("Content-Type", "")
-            raw = response.read(150_000)
-    except (urllib.error.URLError, TimeoutError, ValueError) as error:
-        return {"host": host, "text": "", "error": f"Could not retrieve {host}: {error.__class__.__name__}."}
+        with opener.open(request, timeout=PAGE_TIMEOUT_SECONDS) as response:
+            content_type = response.headers.get("Content-Type", "").lower()
 
-    if "html" not in content_type and "text" not in content_type and "json" not in content_type:
-        return {"host": host, "text": "", "error": ""}
+            if not any(kind in content_type for kind in (
+                "text/html", "text/plain", "application/json"
+            )):
+                return {"host": host, "text": "", "error": ""}
 
-    text = raw.decode("utf-8", errors="ignore")
-    text = re.sub(r"(?is)<script.*?>.*?</script>", " ", text)
-    text = re.sub(r"(?is)<style.*?>.*?</style>", " ", text)
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
+            raw = response.read(MAX_PAGE_BYTES + 1)
 
-    return {"host": host, "text": text[:80_000], "error": ""}
+            if len(raw) > MAX_PAGE_BYTES:
+                raw = raw[:MAX_PAGE_BYTES]
+
+    except urllib.error.HTTPError as error:
+        if 300 <= error.code < 400:
+            message = f"{host} redirected to another address; automatic redirects were blocked."
+        else:
+            message = f"{host} returned HTTP status {error.code}."
+
+        return {"host": host, "text": "", "error": message}
+
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        logger.info("Could not retrieve public page: %s", host)
+        return {
+            "host": host,
+            "text": "",
+            "error": f"Could not retrieve {host}. The page may be unavailable.",
+        }
+
+    decoded = raw.decode("utf-8", errors="replace")
+
+    if "html" in content_type:
+        parser = _TextExtractor()
+
+        try:
+            parser.feed(decoded)
+            page_text = parser.get_text()
+        except Exception:
+            page_text = re.sub(r"<[^>]+>", " ", decoded)
+    else:
+        page_text = decoded
+
+    page_text = re.sub(r"\s+", " ", page_text).strip()
+
+    return {
+        "host": host,
+        "text": page_text[:MAX_TEXT_PER_SOURCE],
+        "error": "",
+    }
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Prevent a public URL from redirecting the fetcher to a private address."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _parse_http_url(url: str | None):
+    if not isinstance(url, str) or not url.strip():
+        return None
+
+    try:
+        parsed = urlparse(url.strip())
+
+        if parsed.scheme.lower() not in {"http", "https"}:
+            return None
+
+        if not parsed.hostname:
+            return None
+
+        # Credentials in submitted URLs are not accepted.
+        if parsed.username is not None or parsed.password is not None:
+            return None
+
+        # Accessing .port validates malformed port values.
+        _ = parsed.port
+
+        return parsed
+
+    except (ValueError, TypeError):
+        return None
 
 
 def _is_public_host(host: str) -> bool:
-    host = host.strip("[]").lower()
+    """Reject hosts resolving to private, local, reserved, or non-global IPs."""
 
-    if host in {"localhost", "0.0.0.0"} or host.endswith(".local") or host.endswith(".internal"):
+    host = host.strip("[]").lower().rstrip(".")
+
+    if (
+        not host
+        or host == "localhost"
+        or host.endswith((".local", ".internal", ".localhost"))
+    ):
         return False
 
     try:
         addresses = [ipaddress.ip_address(host)]
     except ValueError:
         try:
-            infos = socket.getaddrinfo(host, None)
+            infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
         except socket.gaierror:
-            return True
+            return False
 
         addresses = []
 
@@ -553,21 +927,11 @@ def _is_public_host(host: str) -> bool:
             except ValueError:
                 continue
 
-        if not addresses:
-            return False
-
-    return all(_is_global(ip) for ip in addresses)
+    return bool(addresses) and all(_is_global(ip) for ip in addresses)
 
 
 def _is_global(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
+    return ip.is_global
 
 
 def _domain_resolves(host: str) -> bool:
@@ -575,31 +939,43 @@ def _domain_resolves(host: str) -> bool:
         return False
 
     try:
-        socket.getaddrinfo(host, None)
+        socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
         return True
-    except socket.gaierror:
+    except (socket.gaierror, OSError):
         return False
 
 
 def _host(url: str | None) -> str:
-    if not url:
-        return ""
-
-    parsed = urlparse(url)
-    return (parsed.hostname or "").lower()
+    parsed = _parse_http_url(url)
+    return parsed.hostname.lower().rstrip(".") if parsed else ""
 
 
 def _domain_of(email: str) -> str:
-    return email.split("@", 1)[-1].lower()
+    return email.rsplit("@", 1)[-1].lower()
 
 
 def _registrable(host: str) -> str:
-    labels = host.lower().split(".")
+    """Approximate registrable domain; not a complete public-suffix implementation."""
 
-    if len(labels) >= 2:
-        return ".".join(labels[-2:])
+    host = host.lower().strip(".")
+    labels = host.split(".")
 
-    return host.lower()
+    if len(labels) < 2:
+        return host
+
+    # Handle common multi-label public suffixes.
+    common_second_level_suffixes = {
+        "co.in", "com.in", "net.in", "org.in",
+        "co.uk", "org.uk", "ac.uk",
+        "com.au", "net.au", "org.au",
+    }
+
+    last_two = ".".join(labels[-2:])
+
+    if last_two in common_second_level_suffixes and len(labels) >= 3:
+        return ".".join(labels[-3:])
+
+    return last_two
 
 
 def _is_job_board(host: str) -> bool:
@@ -608,7 +984,12 @@ def _is_job_board(host: str) -> bool:
 
 
 def _company_name(host: str | None, corpus: str) -> str | None:
-    match = re.search(r"(?:company|organization|organisation)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 .&]{1,60})", corpus, re.I)
+    match = re.search(
+        r"(?:company|organization|organisation)\s*[:\-]\s*"
+        r"([A-Za-z0-9][A-Za-z0-9 .&]{1,60})",
+        corpus,
+        re.IGNORECASE,
+    )
 
     if match:
         return match.group(1).strip(" .")
@@ -616,10 +997,11 @@ def _company_name(host: str | None, corpus: str) -> str | None:
     if not host or _is_job_board(host):
         return None
 
-    label = host.split(".")[0]
+    labels = host.split(".")
+    label = labels[0]
 
-    if label in {"www", "jobs", "careers", "mail"} and "." in host:
-        label = host.split(".")[1]
+    if label in {"www", "jobs", "careers", "mail"} and len(labels) > 2:
+        label = labels[1]
 
     label = label.replace("-", " ").replace("_", " ").strip()
 
@@ -636,15 +1018,14 @@ def _job_role(corpus: str) -> str | None:
         return match.group(1).strip(" .")[:80]
 
     titled = re.search(
-        r"\b((?:software|frontend|backend|data|graphic|marketing|hr|human resources)[\w /]{0,40}(?:intern(?:ship)?|engineer|developer|analyst|designer|manager))\b",
+        r"\b((?:software|frontend|backend|data|graphic|marketing|hr|"
+        r"human resources)[\w /]{0,40}"
+        r"(?:intern(?:ship)?|engineer|developer|analyst|designer|manager))\b",
         corpus,
-        re.I,
+        re.IGNORECASE,
     )
 
-    if titled:
-        return titled.group(1).strip()[:80]
-
-    return None
+    return titled.group(1).strip()[:80] if titled else None
 
 
 def _normalize_phone(value: str) -> str:
@@ -657,10 +1038,12 @@ def _normalize_phone(value: str) -> str:
 
 
 def _unique(values) -> list[str]:
-    seen = []
+    seen = set()
+    result = []
 
     for value in values:
         if value and value not in seen:
-            seen.append(value)
+            seen.add(value)
+            result.append(value)
 
-    return seen
+    return result
