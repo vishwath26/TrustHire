@@ -1,6 +1,4 @@
-fastapi==0.162.2
-uvicorn==0.54.0
-SQLAlchemy==2.1.8
+
 fastapi==0.162.2
 uvicorn==0.54.0
 SQLAlchemy==2.1.8
@@ -10,6 +8,3 @@ pypdf>=5.0.0
 PyMuPDF>=1.24.0
 pytesseract>=0.3.10
 Pillow>=10.0.0
-python-multipart==0.0.33
-pydantic==2.14.3
-pypdf>=5.0.0
