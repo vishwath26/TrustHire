@@ -35,3 +35,10 @@ dist-ssr
 # Python virtual environments
 venv/
 .venv/
+# Python generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local test artifact
+backend/legitimate_test.txt
