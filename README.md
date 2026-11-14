@@ -102,6 +102,11 @@ npm run dev
 
 ---
 
+## PPT Google Slide link:
+https://docs.google.com/presentation/d/1EMzS3Gjm_Ohfun2CFuaPiIUuGo_2K6EI/edit?usp=sharing
+
+---
+
 ## 👥 Team: AlgoNex
 
 * **Anugraha Pradaa** — *AI/ML and Intelligent Systems Engineer*  
