@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -12,6 +13,12 @@ import {
   CreditCard,
   CheckCircle2,
   Info,
+  Activity,
+  ArrowUpRight,
+  CircleDashed,
+  AlertCircle,
+  ClipboardCheck,
+  BriefcaseBusiness,
 } from "lucide-react";
 import { getInvestigation, listInvestigations } from "../api";
 
@@ -25,45 +32,76 @@ const categoryIcons = {
 };
 
 function badgeClass(status) {
-  if (status === "High risk") return "bg-red-400/10 text-red-300";
-  if (status === "Info") return "bg-cyan-400/10 text-cyan-300";
-  return "bg-amber-400/10 text-amber-300";
+  if (status === "High risk")
+    return "border-red-400/20 bg-red-400/[0.08] text-red-300";
+
+  if (status === "Info")
+    return "border-sky-400/20 bg-sky-400/[0.08] text-sky-300";
+
+  return "border-amber-400/20 bg-amber-400/[0.08] text-amber-300";
 }
 
 function levelClass(level) {
-  if (level === "High Risk") return "border-red-400/20 bg-red-400/10 text-red-300";
-  if (level === "Verified") return "border-emerald-400/20 bg-emerald-400/10 text-emerald-300";
-  if (level === "Needs Review") return "border-amber-400/20 bg-amber-400/10 text-amber-300";
-  return "border-white/10 bg-white/5 text-gray-300";
+  if (level === "High Risk")
+    return "border-red-400/25 bg-red-400/[0.08] text-red-300";
+
+  if (level === "Verified")
+    return "border-emerald-400/25 bg-emerald-400/[0.08] text-emerald-300";
+
+  if (level === "Needs Review")
+    return "border-amber-400/25 bg-amber-400/[0.08] text-amber-300";
+
+  return "border-white/10 bg-white/[0.04] text-gray-300";
 }
+
+const panel =
+  "rounded-2xl border border-emerald-400/[0.12] bg-[#111B17]/80 shadow-lg shadow-black/10 backdrop-blur-xl";
+
+const mutedText = "text-[#91A39A]";
 
 export default function RiskAssessment() {
   const { publicId } = useParams();
   const navigate = useNavigate();
+
   const [report, setReport] = useState(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [displayScore, setDisplayScore] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
+        setLoading(true);
+        setError("");
+
         if (!publicId) {
           const list = await listInvestigations();
+
           if (cancelled) return;
-          if (list[0]) navigate(`/report/${list[0].public_id}`, { replace: true });
-          else setError("No investigation to report yet.");
+
+          if (list[0]) {
+            navigate(`/report/${list[0].public_id}`, { replace: true });
+          } else {
+            setError("No investigation to report yet.");
+          }
+
           return;
         }
 
         const data = await getInvestigation(publicId);
+
         if (!cancelled) setReport(data);
       } catch (loadError) {
         if (!cancelled) setError(loadError.message);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
 
     load();
+
     return () => {
       cancelled = true;
     };
@@ -71,158 +109,357 @@ export default function RiskAssessment() {
 
   const score = report?.risk_score ?? 0;
   const scored = report?.risk_score != null;
+  const findings = report?.findings || [];
+  const recommendations = report?.recommendations || [];
+
+  // Animate the displayed score only. The backend score is not modified.
+  useEffect(() => {
+    if (!scored) {
+      setDisplayScore(0);
+      return;
+    }
+
+    const target = Math.max(0, Math.min(100, Number(score) || 0));
+    const duration = 6000;
+    let frameId;
+    let startTime;
+
+    const animate = (timestamp) => {
+      if (startTime === undefined) startTime = timestamp;
+
+      const progress = Math.min((timestamp - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 4);
+
+      setDisplayScore(Math.round(target * eased));
+
+      if (progress < 1) {
+        frameId = requestAnimationFrame(animate);
+      }
+    };
+
+    setDisplayScore(0);
+    frameId = requestAnimationFrame(animate);
+
+    return () => cancelAnimationFrame(frameId);
+  }, [score, scored]);
+
+  const scoreColor =
+    report?.risk_level === "High Risk"
+      ? "#F06464"
+      : report?.risk_level === "Needs Review"
+        ? "#F5B942"
+        : "#39D98A";
 
   return (
-    <main className="min-h-screen bg-[#080b14] text-white px-5 py-8 md:px-10">
-      <div className="max-w-6xl mx-auto">
-        <Link
-          to={report ? `/dashboard/${report.public_id}` : "/dashboard"}
-          className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-white transition mb-8"
-        >
-          <ArrowLeft size={16} />
-          Back to investigation
-        </Link>
+    <main className="relative min-h-screen overflow-hidden px-5 py-8 text-white md:px-10">
+      {/* Ambient background */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute -top-40 right-0 h-[450px] w-[450px] rounded-full bg-emerald-500/[0.06] blur-[140px]" />
+        <div className="absolute bottom-0 left-0 h-[350px] w-[350px] rounded-full bg-green-500/[0.04] blur-[120px]" />
+      </div>
 
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
-          <div>
-            <p className="text-sm text-cyan-400 mb-2">INVESTIGATION REPORT</p>
-            <h1 className="text-3xl md:text-4xl font-semibold">Risk Assessment</h1>
-            <p className="text-gray-400 mt-2">A breakdown of the evidence and potential recruitment risks.</p>
-          </div>
-          <div className="text-sm text-gray-400 border border-white/10 rounded-xl px-4 py-3">
-            Report ID: <span className="text-white">{report?.public_id || "—"}</span>
-          </div>
-        </div>
+      <div className="relative z-10 mx-auto max-w-7xl">
+        {/* Top navigation */}
+        <header className="mb-9 flex flex-wrap items-center justify-between gap-4 border-b border-white/[0.07] pb-6">
+          <Link
+            to={report ? `/dashboard/${report.public_id}` : "/dashboard"}
+            className="inline-flex items-center gap-2 text-sm text-[#91A39A] transition hover:text-emerald-400"
+          >
+            <ArrowLeft size={17} />
+            Back to investigation
+          </Link>
 
-        {error && <p className="text-sm text-red-200 mb-6">{error}</p>}
-        {!report && !error && <p className="text-sm text-gray-400">Loading report…</p>}
+          {report && (
+            <div className="rounded-lg border border-white/[0.08] bg-white/[0.03] px-4 py-2.5 text-xs text-[#91A39A]">
+              REPORT ID:
+              <span className="ml-2 font-semibold text-white">
+                {report.public_id}
+              </span>
+            </div>
+          )}
+        </header>
+
+        {/* Page heading */}
+        <section className="mb-9">
+          <div className="mb-5 inline-flex items-center gap-2 rounded-md border border-emerald-400/20 bg-emerald-400/[0.07] px-3 py-2 text-xs font-semibold tracking-widest text-emerald-400">
+            <ClipboardCheck size={15} />
+            INVESTIGATION REPORT
+          </div>
+
+          <h1 className="text-3xl font-bold tracking-tight md:text-5xl">
+            Risk Assessment
+          </h1>
+
+          <p className={`${mutedText} mt-3 max-w-2xl leading-7`}>
+            A detailed breakdown of the evidence, findings and potential
+            recruitment risks associated with this opportunity.
+          </p>
+        </section>
+
+        {/* Error state */}
+        {error && (
+          <div className="mb-7 flex items-start gap-3 rounded-xl border border-red-400/20 bg-red-400/[0.07] p-5 text-sm text-red-300">
+            <AlertCircle size={20} className="mt-0.5 shrink-0" />
+            <div>
+              <p className="font-semibold">Unable to load report</p>
+              <p className="mt-1 text-red-200/80">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Loading state */}
+        {loading && (
+          <div className={`${panel} flex items-center justify-center gap-3 py-20`}>
+            <CircleDashed size={22} className="animate-spin text-emerald-400" />
+            <p className={`${mutedText} text-sm`}>
+              Loading assessment report...
+            </p>
+          </div>
+        )}
 
         {report && (
           <>
-            <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.06] p-4 flex gap-3 mb-8">
-              <Info className="text-cyan-300 shrink-0 mt-0.5" size={19} />
-              <p className="text-sm text-gray-300">
-                This score counts warning signs in the evidence you submitted.
-                A low score means those signs were not found. It does not prove the opportunity is legitimate.
-              </p>
+            {/* Score explanation */}
+            <div className="mb-8 flex items-start gap-3 rounded-xl border border-emerald-400/15 bg-emerald-400/[0.05] p-5">
+              <Info className="mt-0.5 shrink-0 text-emerald-400" size={20} />
+              <div>
+                <p className="text-sm font-semibold text-emerald-300">
+                  Understanding your risk score
+                </p>
+                <p className="mt-1 text-sm leading-6 text-[#A7B5AE]">
+                  This score counts warning signs in the evidence you
+                  submitted. A low score means those signs were not found.
+                  It does not prove the opportunity is legitimate.
+                </p>
+              </div>
             </div>
 
-            <section className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-8">
-              <div className="lg:col-span-2 rounded-2xl border border-white/10 bg-white/[0.03] p-6 md:p-8">
-                <div className="flex items-center gap-2 text-gray-400 text-sm mb-5">
-                  <ShieldAlert size={18} />
-                  Overall risk assessment
+            {/* Overall assessment and opportunity details */}
+            <section className="mb-8 grid grid-cols-1 gap-5 lg:grid-cols-3">
+              {/* Risk score */}
+              <div className={`${panel} p-6 md:p-8 lg:col-span-2`}>
+                <div className="mb-7 flex items-center gap-2 text-sm font-medium text-[#91A39A]">
+                  <Activity size={18} className="text-emerald-400" />
+                  OVERALL RISK ASSESSMENT
                 </div>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-8">
+
+                <div className="flex flex-col items-center gap-8 sm:flex-row">
+                  {/* Animated circular score */}
                   <div
-                    className="relative w-40 h-40 shrink-0 rounded-full flex items-center justify-center"
+                    className="relative flex h-44 w-44 shrink-0 items-center justify-center rounded-full transition-none"
                     style={{
-                      background: `conic-gradient(#22d3ee ${scored ? score * 3.6 : 0}deg, #252b38 0deg)`,
+                      background: `conic-gradient(${scoreColor} ${scored ? displayScore * 3.6 : 0}deg, #26332D 0deg)`,
                     }}
                   >
-                    <div className="w-[126px] h-[126px] rounded-full bg-[#0b1020] flex flex-col items-center justify-center">
-                      <span className="text-4xl font-bold">{scored ? score : "—"}</span>
-                      <span className="text-xs text-gray-400">out of 100</span>
+                    <div className="flex h-[150px] w-[150px] flex-col items-center justify-center rounded-full border border-white/[0.05] bg-[#0B120E]">
+                      <span className="text-5xl font-bold tabular-nums">
+                        {scored ? displayScore : "—"}
+                      </span>
+                      <span className="mt-1 text-xs text-[#718078]">
+                        OUT OF 100
+                      </span>
                     </div>
                   </div>
-                  <div>
-                    <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm ${levelClass(report.risk_level)}`}>
+
+                  {/* Classification */}
+                  <div className="min-w-0">
+                    <span
+                      className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-semibold ${levelClass(report.risk_level)}`}
+                    >
                       <AlertTriangle size={14} />
-                      {report.risk_level || report.status}
+                      {report.risk_level ||
+                        report.status ||
+                        "Assessment incomplete"}
                     </span>
-                    <h2 className="text-2xl font-semibold mt-3">{report.risk_level || "Assessment incomplete"}</h2>
-                    <p className="text-gray-400 text-sm leading-6 mt-2">{report.summary}</p>
+
+                    <h2 className="mt-4 text-2xl font-bold">
+                      {report.risk_level || "Assessment incomplete"}
+                    </h2>
+
+                    <p className={`${mutedText} mt-3 max-w-xl text-sm leading-7`}>
+                      {report.summary ||
+                        "No assessment summary is available for this investigation."}
+                    </p>
                   </div>
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-                <p className="text-sm text-gray-400 mb-5">Opportunity details</p>
-                <div className="space-y-5">
+              {/* Opportunity details */}
+              <div className={`${panel} p-6`}>
+                <div className="mb-7 flex items-center gap-2">
+                  <BriefcaseBusiness size={19} className="text-emerald-400" />
+                  <h2 className="font-semibold">Opportunity details</h2>
+                </div>
+
+                <div className="space-y-6">
                   <div>
-                    <p className="text-xs text-gray-500">JOB ROLE</p>
-                    <p className="text-sm mt-1">{report.job_role || "Not specified"}</p>
+                    <p className="text-[10px] font-semibold tracking-widest text-[#718078]">
+                      JOB ROLE
+                    </p>
+                    <p className="mt-2 text-sm font-medium text-[#E1E9E4]">
+                      {report.job_role || "Not specified"}
+                    </p>
                   </div>
-                  <div>
-                    <p className="text-xs text-gray-500">CLAIMED COMPANY</p>
-                    <p className="text-sm mt-1">{report.company_name || "Not specified"}</p>
+
+                  <div className="border-t border-white/[0.07] pt-5">
+                    <p className="text-[10px] font-semibold tracking-widest text-[#718078]">
+                      CLAIMED COMPANY
+                    </p>
+                    <p className="mt-2 break-words text-sm font-medium text-[#E1E9E4]">
+                      {report.company_name || "Not specified"}
+                    </p>
                   </div>
-                  <div>
-                    <p className="text-xs text-gray-500">REPORT STATUS</p>
-                    <p className="text-sm mt-1">{report.status}</p>
+
+                  <div className="border-t border-white/[0.07] pt-5">
+                    <p className="text-[10px] font-semibold tracking-widest text-[#718078]">
+                      REPORT STATUS
+                    </p>
+                    <p className="mt-2 text-sm font-medium text-[#E1E9E4]">
+                      {report.status || "Not specified"}
+                    </p>
                   </div>
                 </div>
               </div>
             </section>
 
-            <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 mb-8">
-              <div className="flex items-center justify-between gap-3 mb-6">
+            {/* Evidence breakdown */}
+            <section className={`${panel} mb-8 p-5 md:p-7`}>
+              <div className="mb-7 flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] pb-5">
                 <div>
-                  <h2 className="text-xl font-semibold">Evidence breakdown</h2>
-                  <p className="text-sm text-gray-400 mt-1">Findings from the submitted links and documents.</p>
+                  <div className="flex items-center gap-3">
+                    <FileText size={20} className="text-emerald-400" />
+                    <h2 className="text-xl font-bold">Evidence breakdown</h2>
+                  </div>
+                  <p className={`${mutedText} mt-2 text-sm`}>
+                    Findings from the submitted links and documents.
+                  </p>
                 </div>
-                <span className="text-xs text-gray-500">{report.findings.length} findings</span>
+
+                <span className="rounded-md border border-emerald-400/15 bg-emerald-400/[0.06] px-3 py-2 text-xs font-medium text-emerald-300">
+                  {findings.length} FINDINGS
+                </span>
               </div>
-              <div className="space-y-4">
-                {report.findings.map((item) => {
+
+              <div className="space-y-3">
+                {findings.map((item) => {
                   const Icon = categoryIcons[item.category] || FileText;
+
                   return (
-                    <div key={item.id} className="rounded-xl border border-white/[0.07] bg-black/20 p-4">
-                      <div className="flex flex-col sm:flex-row sm:items-start gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-white/[0.06] flex items-center justify-center shrink-0">
-                          <Icon size={19} className="text-cyan-300" />
+                    <article
+                      key={item.id}
+                      className="rounded-xl border border-white/[0.07] bg-[#080D0B]/45 p-5 transition hover:border-emerald-400/20 hover:bg-[#142019]/60"
+                    >
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-emerald-400/20 bg-emerald-400/[0.07]">
+                          <Icon size={20} className="text-emerald-400" />
                         </div>
-                        <div className="flex-1">
+
+                        <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="font-medium">{item.title}</h3>
-                            <span className={`text-xs px-2 py-1 rounded-full ${badgeClass(item.status)}`}>{item.status}</span>
+                            <h3 className="font-semibold text-white">
+                              {item.title}
+                            </h3>
+
+                            <span
+                              className={`rounded-md border px-2.5 py-1 text-[10px] font-semibold ${badgeClass(item.status)}`}
+                            >
+                              {item.status}
+                            </span>
                           </div>
-                          <p className="text-sm text-gray-400 mt-2 leading-6">{item.detail}</p>
+
+                          <p className={`${mutedText} mt-2 text-sm leading-7`}>
+                            {item.detail}
+                          </p>
                         </div>
-                        <div className="sm:text-right shrink-0">
-                          <p className="text-lg font-semibold">+{item.points}</p>
-                          <p className="text-xs text-gray-500">risk points</p>
+
+                        <div className="flex shrink-0 items-center gap-2 sm:block sm:min-w-20 sm:text-right">
+                          <p className="text-xl font-bold tabular-nums text-emerald-300">
+                            +{item.points}
+                          </p>
+                          <p className="text-[10px] tracking-wider text-[#718078]">
+                            RISK POINTS
+                          </p>
                         </div>
                       </div>
-                    </div>
+                    </article>
                   );
                 })}
-                {report.findings.length === 0 && (
-                  <p className="text-sm text-gray-400">No findings were recorded.</p>
+
+                {findings.length === 0 && (
+                  <div className="py-12 text-center">
+                    <ShieldCheck size={30} className="mx-auto text-emerald-400" />
+                    <p className="mt-4 font-medium">No findings recorded</p>
+                    <p className={`${mutedText} mt-2 text-sm`}>
+                      No evidence findings are available for this report.
+                    </p>
+                  </div>
                 )}
               </div>
-              <div className="flex justify-between items-center border-t border-white/10 mt-5 pt-5">
-                <span className="text-sm text-gray-400">Total score</span>
-                <span className="text-xl font-semibold text-cyan-300">
+
+              {/* Total score */}
+              <div className="mt-6 flex items-center justify-between border-t border-white/[0.08] pt-5">
+                <span className="text-sm text-[#91A39A]">
+                  Total risk score
+                </span>
+                <span className="text-xl font-bold tabular-nums text-emerald-300">
                   {scored ? `${score} / 100` : "Not scored"}
                 </span>
               </div>
             </section>
 
-            <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 mb-8">
-              <div className="flex items-center gap-2 mb-5">
-                <ShieldCheck className="text-cyan-300" size={21} />
-                <h2 className="text-xl font-semibold">Recommended actions</h2>
+            {/* Recommended actions */}
+            <section className={`${panel} mb-8 p-5 md:p-7`}>
+              <div className="mb-6 flex items-center gap-3 border-b border-white/[0.07] pb-5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-400/20 bg-emerald-400/[0.07]">
+                  <ShieldCheck size={21} className="text-emerald-400" />
+                </div>
+
+                <div>
+                  <h2 className="text-xl font-bold">Recommended actions</h2>
+                  <p className={`${mutedText} mt-1 text-sm`}>
+                    Suggested next steps based on the assessment.
+                  </p>
+                </div>
               </div>
-              <div className="space-y-4">
-                {report.recommendations.map((item) => (
-                  <div key={item} className="flex items-start gap-3">
-                    <CheckCircle2 className="text-cyan-300 shrink-0 mt-0.5" size={18} />
-                    <p className="text-sm text-gray-300 leading-6">{item}</p>
-                  </div>
-                ))}
-              </div>
+
+              {recommendations.length > 0 ? (
+                <div className="space-y-4">
+                  {recommendations.map((item, index) => (
+                    <div
+                      key={`${index}-${item}`}
+                      className="flex items-start gap-3"
+                    >
+                      <CheckCircle2
+                        className="mt-0.5 shrink-0 text-emerald-400"
+                        size={19}
+                      />
+                      <p className="text-sm leading-7 text-[#C4D0C9]">
+                        {item}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className={`${mutedText} text-sm`}>
+                  No recommended actions are available for this report.
+                </p>
+              )}
             </section>
 
-            <div className="flex flex-col sm:flex-row gap-3 justify-between items-center">
-              <p className="text-xs text-gray-500">TRUSTHIRE · Evidence before judgment</p>
+            {/* Bottom navigation */}
+            <footer className="flex flex-col items-start justify-between gap-5 border-t border-white/[0.07] py-6 sm:flex-row sm:items-center">
+              <p className="text-xs text-[#718078]">
+                TRUSTHIRE · Evidence before judgment
+              </p>
+
               <Link
                 to={`/trust-graph/${report.public_id}`}
-                className="inline-flex items-center gap-2 rounded-xl bg-cyan-400 text-black font-medium px-5 py-3 hover:bg-cyan-300 transition"
+                className="inline-flex items-center gap-2 rounded-lg border border-emerald-400/20 bg-emerald-400/[0.08] px-5 py-3 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-400/[0.16]"
               >
                 Open trust graph
+                <ArrowUpRight size={17} />
               </Link>
-            </div>
+            </footer>
           </>
         )}
       </div>

@@ -1,6 +1,7 @@
 
 import { useState } from "react";
 import { NavLink, Outlet, Link } from "react-router-dom";
+
 import {
   ShieldCheck,
   LayoutDashboard,
@@ -10,133 +11,224 @@ import {
   ShieldAlert,
   Menu,
   X,
-  ChevronRight,
+  Settings,
+  ChevronDown,
 } from "lucide-react";
 
 const navigation = [
   {
     title: "WORKSPACE",
     links: [
-      { name: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-      { name: "New Investigation", path: "/investigate", icon: FileSearch },
-      { name: "My Investigations", path: "/my-investigations", icon: FolderOpen },
+      {
+        name: "Dashboard",
+        path: "/dashboard",
+        icon: LayoutDashboard,
+      },
+      {
+        name: "New Investigation",
+        path: "/investigate",
+        icon: FileSearch,
+      },
+      {
+        name: "My Investigations",
+        path: "/my-investigations",
+        icon: FolderOpen,
+      },
     ],
   },
   {
     title: "INTELLIGENCE",
     links: [
-      { name: "Threat Intelligence", path: "/threat-intelligence", icon: ShieldAlert },
-      { name: "Trust Graph", path: "/trust-graph", icon: Network },
+      {
+        name: "Threat Intelligence",
+        path: "/threat-intelligence",
+        icon: ShieldAlert,
+      },
+      {
+        name: "Trust Graph",
+        path: "/trust-graph",
+        icon: Network,
+      },
     ],
   },
 ];
 
 function Sidebar({ closeMenu }) {
   return (
-    <div className="h-full flex flex-col bg-[#0b1020] border-r border-white/10">
-      <Link to="/" className="flex items-center gap-3 px-6 py-7">
-        <div className="w-10 h-10 rounded-xl bg-cyan-400/10 border border-cyan-400/20 flex items-center justify-center">
-          <ShieldCheck size={23} className="text-cyan-300" />
-        </div>
-        <div>
-          <h1 className="font-bold tracking-wide text-lg">TRUSTHIRE</h1>
-          <p className="text-[10px] tracking-[0.2em] text-gray-500">
-            RECRUITMENT INTELLIGENCE
-          </p>
-        </div>
-      </Link>
+    <aside className="app-sidebar">
+      <div className="app-sidebar-inner">
 
-      <div className="px-4 mt-4 flex-1">
-        {navigation.map((group) => (
-          <div key={group.title} className="mb-8">
-            <p className="text-[10px] tracking-[0.18em] text-gray-500 font-semibold px-3 mb-3">
-              {group.title}
+        {/* BRAND */}
+        <Link
+          to="/"
+          onClick={closeMenu}
+          className="flex items-center gap-3 px-5 py-6"
+        >
+          <div className="brand-icon">
+            <ShieldCheck size={22} strokeWidth={2} />
+          </div>
+
+          <div className="flex flex-col gap-0.5">
+            <span className="brand-name">
+              TRUSTHIRE
+            </span>
+
+            <span className="brand-subtitle">
+              RECRUITMENT INTELLIGENCE
+            </span>
+          </div>
+        </Link>
+
+        <div className="mx-5 border-t border-white/[0.06]" />
+
+        {/* NAVIGATION */}
+        <nav className="flex-1 px-4 pt-7">
+
+          {navigation.map((group) => (
+            <div key={group.title} className="mb-8">
+
+              <p className="nav-section-title">
+                {group.title}
+              </p>
+
+              <div className="flex flex-col gap-1">
+
+                {group.links.map((item) => {
+                  const Icon = item.icon;
+
+                  return (
+                    <NavLink
+                      key={item.path}
+                      to={item.path}
+                      onClick={closeMenu}
+                      className={({ isActive }) =>
+                        `nav-item ${
+                          isActive ? "active" : ""
+                        }`
+                      }
+                    >
+                      <Icon size={17} strokeWidth={1.8} />
+
+                      <span>{item.name}</span>
+                    </NavLink>
+                  );
+                })}
+
+              </div>
+            </div>
+          ))}
+
+        </nav>
+
+        {/* BOTTOM SECTION */}
+        <div className="p-4">
+
+          <div className="rounded-lg border border-white/[0.07] bg-white/[0.025] p-3">
+
+            <div className="flex items-center gap-2 mb-2">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+
+              <span className="text-xs font-medium text-gray-300">
+                Recruitment Intelligence
+              </span>
+            </div>
+
+            <p className="text-[11px] leading-5 text-gray-500">
+              Investigate opportunities. Identify suspicious
+              recruiters. Make informed decisions.
             </p>
 
-            <div className="space-y-1">
-              {group.links.map((item) => {
-                const Icon = item.icon;
-
-                return (
-                  <NavLink
-                    key={item.path}
-                    to={item.path}
-                    onClick={closeMenu}
-                    className={({ isActive }) =>
-                      `flex items-center justify-between px-3 py-3 rounded-xl text-sm transition ${
-                        isActive
-                          ? "bg-cyan-400/10 text-cyan-300 border border-cyan-400/10"
-                          : "text-gray-400 hover:text-white hover:bg-white/[0.05]"
-                      }`
-                    }
-                  >
-                    <span className="flex items-center gap-3">
-                      <Icon size={18} />
-                      {item.name}
-                    </span>
-                    <ChevronRight size={15} className="opacity-50" />
-                  </NavLink>
-                );
-              })}
-            </div>
           </div>
-        ))}
-      </div>
 
-      <div className="p-4">
-        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            <p className="text-xs text-gray-300">System workspace</p>
+          <button
+            type="button"
+            className="mt-4 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-gray-400 transition hover:bg-white/[0.04] hover:text-white"
+          >
+            <Settings size={16} />
+
+            <span className="text-xs">
+              Workspace
+            </span>
+
+          </button>
+
+          <div className="mt-3 border-t border-white/[0.06] pt-4">
+            <p className="text-center text-[10px] tracking-wider text-gray-600">
+              TRUSTHIRE © 2026
+            </p>
           </div>
-          <p className="text-xs text-gray-500 leading-5">
-            AI investigation services will be available after backend integration.
-          </p>
+
         </div>
-        <p className="text-[10px] text-gray-600 text-center mt-4">
-          TRUSTHIRE © 2026
-        </p>
       </div>
-    </div>
+    </aside>
   );
 }
 
 export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  return (
-    <div className="min-h-screen bg-[#080b14]">
-      <aside className="hidden lg:block fixed inset-y-0 left-0 w-64 z-40">
-        <Sidebar />
-      </aside>
+  const closeMenu = () => setMobileOpen(false);
 
-      <div className="lg:ml-64 min-w-0">
-        <header className="lg:hidden sticky top-0 z-30 h-16 bg-[#0b1020]/95 backdrop-blur-xl border-b border-white/10 flex items-center justify-between px-5">
+  return (
+    <div className="app-shell">
+
+      {/* DESKTOP SIDEBAR */}
+      <div className="hidden lg:block">
+        <Sidebar />
+      </div>
+
+      {/* MAIN CONTENT */}
+      <div className="app-main min-w-0">
+
+        {/* MOBILE HEADER */}
+        <header className="app-mobile-header">
+
           <Link to="/" className="flex items-center gap-2">
-            <ShieldCheck size={23} className="text-cyan-300" />
-            <span className="font-bold tracking-wide">TRUSTHIRE</span>
+            <div className="brand-icon !h-8 !w-8">
+              <ShieldCheck size={19} />
+            </div>
+
+            <span className="brand-name text-base">
+              TRUSTHIRE
+            </span>
           </Link>
 
           <button
+            type="button"
             onClick={() => setMobileOpen(!mobileOpen)}
-            className="p-2 rounded-lg border border-white/10 text-gray-300"
+            className="rounded-lg border border-white/10 p-2 text-gray-300 hover:bg-white/5"
             aria-label="Toggle navigation"
+            aria-expanded={mobileOpen}
           >
-            {mobileOpen ? <X size={21} /> : <Menu size={21} />}
+            {mobileOpen ? (
+              <X size={20} />
+            ) : (
+              <Menu size={20} />
+            )}
           </button>
+
         </header>
 
+        {/* MOBILE NAVIGATION */}
         {mobileOpen && (
-          <div className="lg:hidden fixed inset-0 top-16 z-40 bg-black/60">
-            <div className="w-72 max-w-[85vw] h-full">
-              <Sidebar closeMenu={() => setMobileOpen(false)} />
+          <div
+            className="fixed inset-0 top-[62px] z-40 bg-black/65 backdrop-blur-sm lg:hidden"
+            onClick={closeMenu}
+          >
+            <div
+              className="h-full w-[280px] max-w-[85vw]"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <Sidebar closeMenu={closeMenu} />
             </div>
           </div>
         )}
 
-        <div className="min-h-screen min-w-0 w-full overflow-x-hidden">
+        {/* PAGE CONTENT */}
+        <main className="min-h-screen min-w-0 w-full overflow-x-hidden">
           <Outlet />
-        </div>
+        </main>
+
       </div>
     </div>
   );
