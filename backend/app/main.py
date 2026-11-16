@@ -28,6 +28,17 @@ app.include_router(investigations.router)
 app.include_router(threats.router)
 
 
+@app.on_event("startup")
+def startup_checks():
+    from app.services.extract import _get_ocr_engine
+    ocr = _get_ocr_engine()
+    if ocr:
+        import pytesseract
+        print(f"✅ [TrustHire] Tesseract OCR ready: {pytesseract.pytesseract.tesseract_cmd}")
+    else:
+        print("⚠️ [TrustHire] Warning: Tesseract OCR executable not found. Image OCR will be disabled.")
+
+
 @app.get("/")
 def home():
     return {

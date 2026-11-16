@@ -1,5 +1,8 @@
+const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
+
 export async function request(path, options) {
-  const response = await fetch(path, options)
+  const url = path.startsWith('http') ? path : `${API_BASE}${path}`
+  const response = await fetch(url, options)
   const data = await response.json().catch(() => ({}))
 
   if (!response.ok) {

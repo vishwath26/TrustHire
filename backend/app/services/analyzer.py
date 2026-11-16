@@ -53,15 +53,27 @@ JOB_BOARDS = {
 }
 
 PAYMENT_PATTERNS = [
+    (
+        r"\b(?:training|registration|processing|security|joining|laptop|equipment|admission|enrollment)\s+(?:deposit\s+)?(?:fee|charge)s?\b",
+        "The evidence mentions a registration, training, or deposit fee.",
+    ),
+    (
+        r"\b(?:security|training|refundable|mandatory|equipment|laptop)\s+deposit\b",
+        "The evidence asks for a security or training deposit.",
+    ),
+    (
+        r"\bdeposit\s+fee\b",
+        "The evidence asks for a deposit fee.",
+    ),
     (r"\bregistration fee\b", "The evidence mentions a registration fee."),
     (r"\btraining fee\b", "The evidence mentions a training fee."),
     (r"\bprocessing fee\b", "The evidence mentions a processing fee."),
     (r"\bsecurity deposit\b", "The evidence asks for a security deposit."),
     (
-        r"\bpay(?:ment)?\s+(?:to|before)\s+(?:join|start|receive)\b",
+        r"\bpay(?:ment)?\b.{0,60}\b(?:to|before)\s+(?:join|joining|start|receive)\b",
         "The evidence asks for payment before the role or benefit begins.",
     ),
-    (r"\bupfront\s+(?:payment|fee)\b", "The evidence asks for an upfront fee."),
+    (r"\bupfront\s+(?:payment|fee|deposit|charge)s?\b", "The evidence asks for an upfront fee or deposit."),
     (r"\bgift cards?\b", "The evidence mentions gift cards as a payment method."),
     (
         r"\b(?:bitcoin|cryptocurrency|crypto|usdt)\b",
@@ -222,44 +234,6 @@ def analyze(
 
     # Keep the total analysis input bounded.
     corpus = "\n".join(texts)[:MAX_TOTAL_TEXT]
-        # Supplementary AI analysis.
-    # AI findings never affect the deterministic risk score.
-    ai_result = {"success": False, "findings": []}
-
-    if corpus.strip():
-        try:
-            ai_result = analyze_recruitment_text(corpus)
-
-            if ai_result.get("success"):
-                for item in ai_result.get("findings", []):
-                    findings.append(Signal(
-                        category="ai",
-                        title=f"AI Review: {item['category'].title()}",
-                        detail=(
-                            f"Evidence: \"{item['evidence']}\" "
-                            f"Reason: {item['reason']}"
-                        ),
-                        points=0,
-                        status=item["severity"],
-                    ))
-
-                if ai_result.get("summary"):
-                    findings.append(Signal(
-                        category="ai",
-                        title="AI Analysis Summary",
-                        detail=ai_result["summary"],
-                        points=0,
-                        status="Info",
-                    ))
-
-            else:
-                logger.info(
-                    "Supplementary AI analysis unavailable: %s",
-                    ai_result.get("error", "Unknown error"),
-                )
-
-        except Exception:
-            logger.exception("Supplementary AI analysis failed.")
 
     emails = _unique(EMAIL_RE.findall(corpus))
     phones = _unique(
@@ -414,6 +388,70 @@ def analyze(
                 "Review",
             )
 
+    # Supplementary AI analysis: Active safety net & contextual review
+    ai_findings: list[Signal] = []
+    if corpus.strip():
+        try:
+            ai_result = analyze_recruitment_text(corpus)
+
+            if ai_result.get("success"):
+                for item in ai_result.get("findings", []):
+                    cat = item["category"]
+                    sev = item["severity"]
+                    ev = item["evidence"]
+                    rsn = item["reason"]
+
+                    # Calibrated scoring: AI acts as a safety net if heuristic regex missed
+                    ai_points = 0
+                    if cat == "payment":
+                        if "payment_request" not in flags:
+                            ai_points = 20 if sev == "High" else 10
+                            flags.add("payment_request")
+                            flags.add("ai_payment")
+                        else:
+                            rsn = "The local Naive Bayes model confirmed payment extortion patterns (corroborating rule detection)."
+                    elif cat in {"identity", "urgency"}:
+                        if "pressure_or_sensitive_data" not in flags:
+                            ai_points = 15 if sev == "High" else 8
+                            flags.add("pressure_or_sensitive_data")
+                            flags.add(f"ai_{cat}")
+                        else:
+                            rsn = "The local Naive Bayes model confirmed urgency or identity-phishing patterns (corroborating rule detection)."
+                    elif cat in {"salary", "recruiter", "company", "communication"}:
+                        flag_name = f"ai_{cat}"
+                        if flag_name not in flags:
+                            ai_points = 10 if sev == "High" else 5
+                            flags.add(flag_name)
+
+                    ai_findings.append(Signal(
+                        category="ai",
+                        title=f"AI Review: {cat.title()}",
+                        detail=f"Evidence: \"{ev}\" Reason: {rsn}",
+                        points=ai_points,
+                        status=sev,
+                    ))
+
+                if ai_result.get("summary"):
+                    ai_findings.append(Signal(
+                        category="ai",
+                        title="AI Analysis Summary",
+                        detail=ai_result["summary"],
+                        points=0,
+                        status="Info",
+                    ))
+
+            else:
+                logger.info(
+                    "Supplementary AI analysis unavailable: %s",
+                    ai_result.get("error", "Unknown error"),
+                )
+
+        except Exception:
+            logger.exception("Supplementary AI analysis failed.")
+
+    # Place AI findings at the top of findings to preserve expected presentation order
+    findings = ai_findings + findings
+
     # Image-specific extraction status.
     if image_files:
         readable_images = [name for name in image_files if name in readable_files]
@@ -483,13 +521,18 @@ def analyze(
         risk_score = float(score)
         status = "Completed"
 
-        if score >= 55:
+        has_critical_threat = "payment_request" in flags or any(
+            item.status in {"High", "High risk"} and item.category in {"fraud", "payment", "identity", "ai"}
+            for item in findings if item.points > 0 or item.category in {"payment", "fraud", "identity"}
+        )
+
+        if score >= 55 or (has_critical_threat and score >= 40):
             risk_level = "High Risk"
             summary = (
                 "Multiple warning signs were detected in the submitted evidence. "
                 "Do not proceed until the opportunity is independently verified."
             )
-        elif score >= 25:
+        elif score >= 25 or has_critical_threat:
             risk_level = "Needs Review"
             summary = (
                 "Some warning signs were detected. They do not prove fraud, "

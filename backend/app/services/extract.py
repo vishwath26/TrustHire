@@ -82,33 +82,40 @@ def _docx_text(content: bytes) -> str:
 # TESSERACT OCR CONFIGURATION
 # --------------------------------------------------
 
-@lru_cache(maxsize=1)
+_CACHED_OCR_ENGINE = None
+
 def _get_ocr_engine():
+    global _CACHED_OCR_ENGINE
+    if _CACHED_OCR_ENGINE is not None:
+        return _CACHED_OCR_ENGINE
+
     try:
         import pytesseract
-
     except ImportError:
         logger.warning("pytesseract is not installed.")
         return None
 
-    configured_path = os.getenv("TESSERACT_CMD")
+    candidate_paths = [
+        Path(os.getenv("TESSERACT_CMD", "")),
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Tesseract-OCR" / "tesseract.exe",
+        Path(os.environ.get("USERPROFILE", "")) / "AppData" / "Local" / "Tesseract-OCR" / "tesseract.exe",
+        Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
+        Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
+    ]
 
-    executable = (
-        Path(configured_path)
-        if configured_path
-        else TESSERACT_DEFAULT_PATH
-    )
+    executable = None
+    for path in candidate_paths:
+        if path and str(path) != "." and path.is_file():
+            executable = path
+            break
 
-    if not executable.is_file():
-        logger.error(
-            "Tesseract executable not found at: %s",
-            executable,
-        )
+    if not executable:
+        logger.error("Tesseract executable not found in any standard path.")
         return None
 
     pytesseract.pytesseract.tesseract_cmd = str(executable)
-
-    return pytesseract
+    _CACHED_OCR_ENGINE = pytesseract
+    return _CACHED_OCR_ENGINE
 
 
 # --------------------------------------------------
