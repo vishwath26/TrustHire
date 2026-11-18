@@ -13,16 +13,19 @@ app = FastAPI(
     version="1.0.0",
 )
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-    "https://trust-hire-five.vercel.app",
-    "https://trust-hire-cyna9qmin-algonex.vercel.app",
+        "https://trust-hire-five.vercel.app",
+        "https://trust-hire-cyna9qmin-algonex.vercel.app",
     ],
+    allow_origin_regex=r"^https://trust-hire-[a-z0-9-]+-algonex\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 app.include_router(investigations.router)
 app.include_router(threats.router)
