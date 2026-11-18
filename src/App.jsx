@@ -68,6 +68,9 @@ function HomePage() {
           <a href="#about" className="transition hover:text-emerald-400">
             About
           </a>
+          <a href="#future-scope" className="transition hover:text-emerald-400">
+            Future Scope
+          </a>
         </div>
 
         <Link
@@ -90,6 +93,7 @@ function HomePage() {
             <a href="#features" onClick={() => setMenuOpen(false)}>Features</a>
             <a href="#how-it-works" onClick={() => setMenuOpen(false)}>How it works</a>
             <a href="#about" onClick={() => setMenuOpen(false)}>About</a>
+            <a href="#future-scope" onClick={() => setMenuOpen(false)}>Future Scope</a>
             <Link to="/investigate" onClick={() => setMenuOpen(false)}>
               Start investigating ↗
             </Link>
@@ -300,6 +304,50 @@ function HomePage() {
             >
               Start investigating ↗
             </Link>
+          </div>
+        </section>
+
+        {/* Future Scope */}
+        <section id="future-scope" className="scroll-mt-20 py-24">
+          <div className="mx-auto max-w-4xl">
+            <div className="mb-12 text-center">
+              <p className="text-sm font-bold tracking-[0.25em] text-emerald-400">
+                WHAT LIES AHEAD
+              </p>
+              <h2 className="mt-4 text-4xl font-bold sm:text-5xl">
+                The future of <span className="text-emerald-400">TRUSTHIRE</span>
+              </h2>
+              <p className="mt-5 leading-7 text-[#A7B5AE]">
+                Building a safer and smarter future for online recruitment.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-emerald-400/15 bg-[#111B17]/70 p-6 backdrop-blur-xl sm:p-9">
+              <div className="space-y-5">
+                {[
+                  ["01", "Advanced AI Detection", "Improve scam detection with smarter AI models."],
+                  ["02", "Company Verification", "Verify company details and identify fake organisations."],
+                  ["03", "Browser Extension", "Check suspicious job postings while browsing."],
+                  ["04", "Community Reporting", "Let users report and share suspicious job offers."],
+                  ["05", "Multilingual Support", "Detect recruitment scams across multiple languages."],
+                ].map(([number, title, description]) => (
+                  <div
+                    key={number}
+                    className="flex items-start gap-5 rounded-xl border border-white/[0.07] bg-[#080D0B]/50 p-5 transition hover:border-emerald-400/25"
+                  >
+                    <span className="pt-0.5 text-lg font-bold text-emerald-400">
+                      {number}
+                    </span>
+                    <div>
+                      <h3 className="font-semibold text-white">{title}</h3>
+                      <p className="mt-1 text-sm leading-6 text-[#A7B5AE]">
+                        {description}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
       </main>

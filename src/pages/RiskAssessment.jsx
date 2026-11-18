@@ -372,14 +372,16 @@ export default function RiskAssessment() {
                           </p>
                         </div>
 
-                        <div className="flex shrink-0 items-center gap-2 sm:block sm:min-w-20 sm:text-right">
-                          <p className="text-xl font-bold tabular-nums text-emerald-300">
-                            +{item.points}
-                          </p>
-                          <p className="text-[10px] tracking-wider text-[#718078]">
-                            RISK POINTS
-                          </p>
-                        </div>
+                        {Number(item.points) > 0 && (
+                          <div className="flex shrink-0 items-center gap-2 sm:block sm:min-w-20 sm:text-right">
+                            <p className="text-xl font-bold tabular-nums text-emerald-300">
+                              +{item.points}
+                            </p>
+                            <p className="text-[10px] tracking-wider text-[#718078]">
+                              RISK POINTS
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </article>
                   );
