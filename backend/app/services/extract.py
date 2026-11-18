@@ -10,7 +10,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 MAX_PDF_PAGES = 20
-OCR_TIMEOUT = 15
+OCR_TIMEOUT = 60
 
 TESSERACT_DEFAULT_PATH = Path(
     r"C:\Program Files\Tesseract-OCR\tesseract.exe"
