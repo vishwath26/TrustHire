@@ -1,7 +1,5 @@
 
-const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL || ''
-).replace(/\/$/, '')
+const API_BASE_URL = 'https://trusthire-a6qy.onrender.com'
 
 export async function request(path, options) {
   const response = await fetch(`${API_BASE_URL}${path}`, options)
@@ -19,7 +17,7 @@ export async function request(path, options) {
 }
 
 export function listInvestigations() {
-  return request('/api/investigations')
+  return request('/api/investigations/')
 }
 
 export function getInvestigation(publicId) {
