@@ -1,8 +1,18 @@
+<<<<<<< Updated upstream
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 
 export async function request(path, options) {
   const url = path.startsWith('http') ? path : `${API_BASE}${path}`
   const response = await fetch(url, options)
+=======
+
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL || ''
+).replace(/\/$/, '')
+
+export async function request(path, options) {
+  const response = await fetch(`${API_BASE_URL}${path}`, options)
+>>>>>>> Stashed changes
   const data = await response.json().catch(() => ({}))
 
   if (!response.ok) {
